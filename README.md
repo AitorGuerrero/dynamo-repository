@@ -13,10 +13,10 @@ on flushing, persists the entity if modified, created or deleted.
 ## Getting Started
 ```typescript
 import {DynamoDB} from 'aws-sdk';
-import {DynamoManagedRepository} from 'dynamo-repository';
+import {ManagedDynamoRepository} from 'dynamo-repository';
 
 const documentClient = new DynamoDB.DocumentClient();
-const repository = new DynamoManagedRepository(
+const repository = new ManagedDynamoRepository(
     documentClient,
     {
         tableName: 'myTableName',

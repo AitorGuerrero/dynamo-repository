@@ -1,0 +1,7 @@
+.idea
+index.js
+src/*.js
+**/*.d.ts
+node_modules
+.nyc_output
+coverage

@@ -8,24 +8,49 @@ import {ITableConfig} from "./table-config.interface";
 import {IGenerator} from "./generator.interface";
 import {ISearchInput} from "./search-input.interface";
 
+/**
+ * Launched event types throw cachedDynamoRepository.eventEmitter
+ */
+export enum EventTypes {
+	/**
+	 * It's triyng to add a entity to a used cached key.
+	 */
+	cacheKeyInUse = "warning.cacheKeyInUse",
+}
+
 export class CachedDynamoRepository<Entity> extends DynamoRepository<Entity> {
+
+	/**
+	 * Class event emitter. For event types, see EventTypes
+	 */
+	public readonly eventEmitter: EventEmitter;
 
 	private readonly cache: Map<any, Map<any, Promise<Entity>>>;
 	private readonly hashKey: string;
 	private readonly rangeKey: string;
 
+	/**
+	 * @param {DocumentClient} dc
+	 * @param {ITableConfig<Entity>} config
+	 * @param {module:events.internal.EventEmitter} eventEmitter
+	 */
 	constructor(
 		dc: DocumentClient,
 		config: ITableConfig<Entity>,
 		eventEmitter?: EventEmitter,
 	) {
-		super(dc, config, eventEmitter);
+		super(dc, config);
 		this.cache = new Map();
 		this.hashKey = this.config.keySchema.find((k) => k.KeyType === "HASH").AttributeName;
 		const rangeSchema = this.config.keySchema.find((k) => k.KeyType === "RANGE");
 		this.rangeKey = rangeSchema ? rangeSchema.AttributeName : undefined;
+		this.eventEmitter = eventEmitter || new EventEmitter();
 	}
 
+	/**
+	 * @param {DocumentClient.Key} key
+	 * @returns {Promise<Entity>}
+	 */
 	public get(key: DocumentClient.Key): Promise<Entity> {
 		if (!this.cache.has(key[this.hashKey])) {
 			this.cache.set(key[this.hashKey], new Map());
@@ -36,6 +61,10 @@ export class CachedDynamoRepository<Entity> extends DynamoRepository<Entity> {
 		return this.cache.get(key[this.hashKey]).get(key[this.rangeKey]);
 	}
 
+	/**
+	 * @param {DocumentClient.Key[]} keys
+	 * @returns {Promise<Map<DocumentClient.Key, Entity>>} The key is the same object of the input.
+	 */
 	public async getList(keys: DocumentClient.Key[]) {
 		const result = new Map<DocumentClient.Key, Entity>();
 		const notCachedKeys: DocumentClient.Key[] = [];
@@ -59,6 +88,10 @@ export class CachedDynamoRepository<Entity> extends DynamoRepository<Entity> {
 		return result;
 	}
 
+	/**
+	 * @param {ISearchInput} input
+	 * @returns {IGenerator<Entity>}
+	 */
 	public search(input: ISearchInput) {
 		const getNextEntity = super.search(input);
 		const generator = (async () => {
@@ -76,15 +109,24 @@ export class CachedDynamoRepository<Entity> extends DynamoRepository<Entity> {
 		return generator;
 	}
 
+	/**
+	 * A helper for getting the entity key in DocumentClient.Key interface
+	 * @param {Entity} e
+	 * @returns {DocumentClient.Key}
+	 */
 	public getEntityKey(e: Entity) {
 		return getEntityKey(this.config.keySchema, this.config.marshal(e));
 	}
 
+	/**
+	 * @param {Entity} e
+	 * @returns {Promise<void>}
+	 */
 	public async addToCache(e: Entity) {
 		await this.addToCacheByKey(this.getEntityKey(e), e);
 	}
 
-	public clear() {
+	public clearCache() {
 		this.cache.clear();
 	}
 
@@ -103,7 +145,7 @@ export class CachedDynamoRepository<Entity> extends DynamoRepository<Entity> {
 		const currentCached = await this.getFromCache(key);
 		if (currentCached !== undefined) {
 			if (currentCached !== entity) {
-				this.eventEmitter.emit("cacheKeyInUse", {
+				this.eventEmitter.emit(EventTypes.cacheKeyInUse, {
 					cachedItem: this.getFromCache(key),
 					newItem: entity,
 				});

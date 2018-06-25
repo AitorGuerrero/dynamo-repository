@@ -1,7 +1,6 @@
 import {DynamoDB} from "aws-sdk";
 import generatorToArray from "./generator-to-array";
 import getEntityKey from "./get-entity-key";
-import {EventEmitter} from "events";
 import {ITableConfig} from "./table-config.interface";
 import {ISearchInput} from "./search-input.interface";
 import {ICountInput} from "./count-input.interface";
@@ -18,16 +17,17 @@ export class DynamoRepository<Entity> {
 		return input.KeyConditionExpression !== undefined;
 	}
 
-	public readonly eventEmitter: EventEmitter;
-
 	protected readonly config: ITableConfig<Entity>;
 	private readonly _hashKey: string;
 	private readonly _rangeKey: string;
 
+	/**
+	 * @param {DocumentClient} dc
+	 * @param {ITableConfig<Entity>} config
+	 */
 	constructor(
 		protected dc: DocumentClient,
 		config: ITableConfig<Entity>,
-		eventEmitter?: EventEmitter,
 	) {
 		this.config = Object.assign({
 			marshal: (e: Entity) => JSON.parse(JSON.stringify(e)) as DocumentClient.AttributeMap,
@@ -38,9 +38,13 @@ export class DynamoRepository<Entity> {
 		if (rangeSchema) {
 			this._rangeKey = rangeSchema.AttributeName;
 		}
-		this.eventEmitter = eventEmitter || new EventEmitter();
 	}
 
+	/**
+	 * If there is not entity with the key, it returns undefined.
+	 * @param {DocumentClient.Key} Key
+	 * @returns {Promise<Entity>}
+	 */
 	public async get(Key: DocumentClient.Key) {
 		const input: DocumentClient.GetItemInput = {
 			Key,
@@ -51,6 +55,11 @@ export class DynamoRepository<Entity> {
 		return response.Item === undefined ? undefined : this.config.unMarshal(response.Item);
 	}
 
+	/**
+	 * If the entity does not exists, returns the position of the key in the map with undefined value.
+	 * @param {DocumentClient.Key[]} keys
+	 * @returns {Promise<Map<DocumentClient.Key, Entity>>} The key is the same object of the input.
+	 */
 	public async getList(keys: DocumentClient.Key[]) {
 		const input: DocumentClient.BatchGetItemInput = {
 			RequestItems: {
@@ -72,6 +81,24 @@ export class DynamoRepository<Entity> {
 		return result;
 	}
 
+	/**
+	 * Returns a generator function. That function returns a Promise<Entity> object. When there are not more entities,
+	 * it returns Promise<undefined>. If you want to iterate the result, yo should use:
+	 * ```typescript
+	 * const getEntity = repository.search({});
+	 * let entity;
+	 * for (entity of await getEntity()) {
+	 *      // use the entity
+	 * }
+	 * ```
+	 * Or you can convert it to an array with
+	 * ```typescript
+	 * const entities = await repository.search({}).toArray();
+	 * ```
+	 * But converting it to array in large results, you increase the Dynamo provisioning consumption.
+	 * @param {ISearchInput} input
+	 * @returns {IGenerator<Entity>}
+	 */
 	public search(input: ISearchInput) {
 		const getNextBlock = this.buildScanBlockGenerator(input);
 
@@ -106,6 +133,11 @@ export class DynamoRepository<Entity> {
 		return generator;
 	}
 
+	/**
+	 * Returns the total amount of entities for the search
+	 * @param {ICountInput} input
+	 * @returns {Promise<number>}
+	 */
 	public async count(input: ICountInput) {
 		const documentClientInput = Object.assign(
 			{},

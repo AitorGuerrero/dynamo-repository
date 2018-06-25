@@ -23,18 +23,26 @@ type TrackedTable = Map<any, {action: Action, initialStatus?: any, entity: any}>
 
 export class ManagedDynamoRepository<Entity> extends CachedDynamoRepository<Entity> {
 
-	public readonly eventEmitter: EventEmitter;
 	private tracked: TrackedTable;
 
+	/**
+	 * @param {DynamoDB.DocumentClient} dc
+	 * @param {ITableConfig<Entity>} config
+	 * @param {module:events.internal.EventEmitter} eventEmitter
+	 */
 	constructor(
 		dc: DynamoDB.DocumentClient,
-		private readonly tableConfig: ITableConfig<Entity>,
+		config: ITableConfig<Entity>,
 		eventEmitter?: EventEmitter,
 	) {
-		super(dc, tableConfig, eventEmitter);
+		super(dc, config, eventEmitter);
 		this.tracked = new Map();
 	}
 
+	/**
+	 * @param {DynamoDB.DocumentClient.Key} key
+	 * @returns {Promise<Entity>}
+	 */
 	public async get(key: DynamoDB.DocumentClient.Key) {
 		const entity = await super.get(key);
 		this.track(entity);
@@ -42,6 +50,10 @@ export class ManagedDynamoRepository<Entity> extends CachedDynamoRepository<Enti
 		return entity;
 	}
 
+	/**
+	 * @param {DynamoDB.DocumentClient.Key[]} keys
+	 * @returns {Promise<Map<DocumentClient.Key, Entity>>}
+	 */
 	public async getList(keys: DynamoDB.DocumentClient.Key[]) {
 		const list = await super.getList(keys);
 		for (const entity of list.values()) {
@@ -51,6 +63,10 @@ export class ManagedDynamoRepository<Entity> extends CachedDynamoRepository<Enti
 		return list;
 	}
 
+	/**
+	 * @param {ISearchInput} input
+	 * @returns {IGenerator<Entity>}
+	 */
 	public search(input: ISearchInput) {
 		const generator = super.search(input);
 		const managedGenerator = (async () => {
@@ -64,6 +80,10 @@ export class ManagedDynamoRepository<Entity> extends CachedDynamoRepository<Enti
 		return managedGenerator;
 	}
 
+	/**
+	 * Flush tracked entities, persisting the changes.
+	 * @returns {Promise<void>}
+	 */
 	public async flush() {
 		const processed: Array<Promise<any>> = [];
 		for (const entityConfig of this.tracked.values()) {
@@ -89,6 +109,12 @@ export class ManagedDynamoRepository<Entity> extends CachedDynamoRepository<Enti
 		this.eventEmitter.emit(eventType.flushed);
 	}
 
+	/**
+	 * Tracks a existing entity. When flushed, it will update the entity of the table.
+	 * If the entity does not changes, it will not be persisted.
+	 * In a future version, it will fail if the entity does not exists in the table.
+	 * @param {Entity} entity
+	 */
 	public track(entity: Entity) {
 		if (entity === undefined) {
 			return;
@@ -99,6 +125,13 @@ export class ManagedDynamoRepository<Entity> extends CachedDynamoRepository<Enti
 		this.tracked.set(entity, {action: "UPDATE", initialStatus: JSON.stringify(entity), entity});
 	}
 
+	/**
+	 * Tracks a new entity. When flushed, it will create the entity in the table.
+	 * It will be persisted even if the entity does not changes.
+	 * In a future version, it will fail if it exists in the table.
+	 * @param {Entity} entity
+	 * @returns {Promise<void>}
+	 */
 	public async trackNew(entity: Entity) {
 		await super.addToCache(entity);
 		if (entity === undefined) {
@@ -124,14 +157,14 @@ export class ManagedDynamoRepository<Entity> extends CachedDynamoRepository<Enti
 		}
 	}
 
-	public clear() {
+	public clearTrackedEntities() {
 		this.tracked = new Map();
 	}
 
 	private async createItem(entity: Entity) {
 		const request = {
-			Item: this.tableConfig.marshal(entity),
-			TableName: this.tableConfig.tableName,
+			Item: this.config.marshal(entity),
+			TableName: this.config.tableName,
 		};
 		try {
 			await this.asyncPut(request);
@@ -147,8 +180,8 @@ export class ManagedDynamoRepository<Entity> extends CachedDynamoRepository<Enti
 			return;
 		}
 		const request = {
-			Item: this.tableConfig.marshal(entity),
-			TableName: this.tableConfig.tableName,
+			Item: this.config.marshal(entity),
+			TableName: this.config.tableName,
 		};
 		try {
 			await this.asyncPut(request);
@@ -166,8 +199,8 @@ export class ManagedDynamoRepository<Entity> extends CachedDynamoRepository<Enti
 	private async deleteItem(item: Entity) {
 		try {
 			return this.asyncDelete({
-				Key: getEntityKey(this.tableConfig.keySchema, this.tableConfig.marshal(item)),
-				TableName: this.tableConfig.tableName,
+				Key: getEntityKey(this.config.keySchema, this.config.marshal(item)),
+				TableName: this.config.tableName,
 			});
 		} catch (err) {
 			this.eventEmitter.emit(eventType.errorDeleting, err, item);
